@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SonicReader Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { 
+            darkMode: 'class', 
+            theme: { 
+                extend: { 
+                    colors: { 
+                        gray: { 850: '#1f2937', 900: '#111827', 950: '#030712' } 
+                    } 
+                } 
+            } 
+        }
+    </script>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans min-h-screen flex justify-center py-10">
+
+    <main class="w-full max-w-4xl px-6">
+        <!-- Header -->
+        <header class="flex items-center gap-3 mb-10">
+            <div class="bg-indigo-600 text-white rounded-lg w-10 h-10 flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/30">S</div>
+            <h1 class="text-2xl font-bold tracking-tight text-white">SonicReader <span class="text-indigo-400">Pro</span></h1>
+        </header>
+
+        <!-- Barra de Control -->
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-4 flex gap-4 mb-6 shadow-xl items-center">
+            <select id="voice" class="bg-gray-800 border border-gray-700 text-white text-sm rounded-lg block w-1/3 p-2.5 outline-none focus:border-indigo-500 transition-colors">
+                <option value="af_heart">🎙️ Heart (US Narrative)</option>
+                <option value="am_adam">👨 Adam (US Deep)</option>
+                <option value="bf_emma">👑 Emma (UK Formal)</option>
+            </select>
+            
+            <button id="playBtn" onclick="generateAudio()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 px-6 rounded-lg transition-all shadow-md flex items-center gap-2 ml-auto active:scale-95">
+                <svg id="btnIcon" class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M3 22v-20l18 10-18 10z"/></svg> 
+                <span id="btnText">Generate Audio</span>
+            </button>
+        </div>
+
+        <!-- Editor y Reproductor -->
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+            <textarea id="text" class="w-full h-48 bg-transparent text-gray-200 text-lg leading-relaxed focus:outline-none resize-none placeholder-gray-600" placeholder="Type your script here..."></textarea>
+            
+            <!-- Contenedor del Reproductor + Botón de Descarga integrado -->
+            <div id="playerContainer" class="mt-4 pt-4 border-t border-gray-800 flex items-center gap-3 hidden">
+                <audio id="audioPlayer" controls class="flex-1"></audio>
+                
+                <a id="downloadBtn" download="SonicReader_Audio.wav" title="Descargar audio (.wav)" 
+                   class="p-2.5 bg-gray-800 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-lg transition-all flex items-center justify-center border border-gray-700 hover:border-indigo-500 shadow-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                </a>
+            </div>
+
+            <div class="text-xs text-gray-500 mt-3 flex items-center justify-between" id="statusContainer">
+                <span id="status">Status: Ready</span>
+                <span id="cacheIndicator" class="text-indigo-400 hidden text-[11px] font-medium">⚡ Repetición instantánea (0ms)</span>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const MODAL_BACKEND_URL = "https://oscardavidmoralesflo-lgtm--sonicreader-pro-backend-fastapi-app.modal.run";
+        const clientCache = new Map();
+
+        document.getElementById('text').value = "Welcome to SonicReader Pro. High-performance voice synthesis powered by Kokoro.";
+
+        async function generateAudio() {
+            const text = document.getElementById('text').value.trim();
+            if (!text) return;
+
+            const voice = document.getElementById('voice').value;
+            const cacheKey = `${text}_${voice}`;
+            const btn = document.getElementById('playBtn');
+            const btnText = document.getElementById('btnText');
+            const btnIcon = document.getElementById('btnIcon');
+            const status = document.getElementById('status');
+            const cacheIndicator = document.getElementById('cacheIndicator');
+            const playerContainer = document.getElementById('playerContainer');
+            const audioPlayer = document.getElementById('audioPlayer');
+            const downloadBtn = document.getElementById('downloadBtn');
+
+            // 1. REPRODUCCIÓN INSTANTÁNEA DESDE MEMORIA (0 ms de espera)
+            if (clientCache.has(cacheKey)) {
+                const cachedUrl = clientCache.get(cacheKey);
+                audioPlayer.src = cachedUrl;
+                downloadBtn.href = cachedUrl;
+                playerContainer.classList.remove('hidden');
+                cacheIndicator.classList.remove('hidden');
+                status.innerText = "Status: Playing from instant client cache.";
+                audioPlayer.play();
+                return;
+            }
+
+            // 2. PETICIÓN A MODAL BACKEND
+            btn.disabled = true;
+            btnText.innerText = "Synthesizing...";
+            btnIcon.classList.add('animate-pulse');
+            cacheIndicator.classList.add('hidden');
+            status.innerText = "Status: Synthesizing neural audio...";
+
+            try {
+                const response = await fetch(`${MODAL_BACKEND_URL}/api/tts/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        text: text, 
+                        voice: voice, 
+                        speed: 1.0 
+                    })
+                });
+
+                if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+
+                const blob = await response.blob();
+                const audioUrl = URL.createObjectURL(blob);
+                
+                // Guardar en la caché local del navegador
+                clientCache.set(cacheKey, audioUrl);
+
+                audioPlayer.src = audioUrl;
+                downloadBtn.href = audioUrl;
+                downloadBtn.download = `SonicReader_${voice}_${Date.now()}.wav`;
+
+                playerContainer.classList.remove('hidden');
+                audioPlayer.play();
+                status.innerText = "Status: Complete!";
+            } catch (err) {
+                status.innerText = "Error: " + err.message;
+            } finally {
+                btn.disabled = false;
+                btnText.innerText = "Generate Audio";
+                btnIcon.classList.remove('animate-pulse');
+            }
+        }
+    </script>
+</body>
+</html>
