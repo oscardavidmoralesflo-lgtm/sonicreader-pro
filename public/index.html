@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuralVoice Pro - TTS SaaS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes subtle-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.9; transform: scale(0.98); }
+        }
+        .anim-pulse {
+            animation: subtle-pulse 3s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-white min-h-screen font-sans antialiased selection:bg-indigo-500 selection:text-white">
+    <div class="max-w-3xl mx-auto p-6 py-12 lg:py-20">
+        <header class="mb-12 text-center space-y-4">
+            <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent drop-shadow-sm">
+                NeuralVoice Pro
+            </h1>
+            <p class="text-gray-400 text-lg md:text-xl font-light">
+                Real-time Text-to-Speech synthesis with zero-latency streaming.
+            </p>
+        </header>
+
+        <main class="bg-gray-900 rounded-3xl shadow-2xl shadow-indigo-900/10 p-6 md:p-10 border border-gray-800/50 backdrop-blur-xl transition-all duration-300 hover:border-gray-700/50">
+            <div class="space-y-8">
+                <!-- Voice Selection -->
+                <div class="space-y-3">
+                    <label class="block text-sm font-semibold text-gray-300 tracking-wide uppercase">Select Voice Model</label>
+                    <div class="relative">
+                        <select id="voice-select" class="block w-full appearance-none bg-gray-950 border border-gray-800 text-white py-4 px-5 rounded-2xl leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-inner cursor-pointer text-lg">
+                            <option value="af_heart">❤️ af_heart (Female, American)</option>
+                            <option value="am_adam">👔 am_adam (Male, American)</option>
+                            <option value="bf_emma">☕ bf_emma (Female, British)</option>
+                        </select>
+                        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-5 text-gray-400">
+                            <svg class="fill-current h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Text Input -->
+                <div class="space-y-3">
+                    <label class="block text-sm font-semibold text-gray-300 tracking-wide uppercase">Text to Synthesize</label>
+                    <textarea id="text-input" rows="5" class="block w-full bg-gray-950 border border-gray-800 text-gray-100 py-4 px-5 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all shadow-inner resize-none text-lg placeholder-gray-600" placeholder="Type or paste your text here. The audio will start playing sentence by sentence instantly as it streams..."></textarea>
+                </div>
+
+                <!-- Action Button -->
+                <button id="stream-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-8 rounded-2xl transition-all duration-200 flex justify-center items-center gap-3 transform hover:-translate-y-1 hover:shadow-lg hover:shadow-indigo-600/40 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none text-lg">
+                    <svg id="spinner" class="animate-spin -ml-1 mr-3 h-6 w-6 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span id="btn-text">Stream Audio</span>
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const btn = document.getElementById('stream-btn');
+        const spinner = document.getElementById('spinner');
+        const btnText = document.getElementById('btn-text');
+        const textInput = document.getElementById('text-input');
+        const voiceSelect = document.getElementById('voice-select');
+
+        let audioCtx;
+        let nextStartTime = 0;
+
+        btn.addEventListener('click', async () => {
+            const text = textInput.value.trim();
+            if (!text) return;
+
+            // UI State - Disable and Loading
+            btn.disabled = true;
+            spinner.classList.remove('hidden');
+            btnText.textContent = 'Synthesizing & Streaming...';
+            btn.classList.add('anim-pulse');
+
+            // Initialize or resume Web Audio API
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext({ sampleRate: 24000 });
+            }
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+
+            // Sync timing based on current context time to avoid gaps/overlaps
+            nextStartTime = audioCtx.currentTime;
+
+            try {
+                const response = await fetch('/api/tts/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: text,
+                        voice: voiceSelect.value,
+                        speed: 1.0
+                    })
+                });
+
+                if (!response.ok) throw new Error('Failed to connect to TTS server');
+
+                const reader = response.body.getReader();
+                let buffer = new Uint8Array(0);
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    // Concat new chunk to the existing buffer
+                    const newBuffer = new Uint8Array(buffer.length + value.length);
+                    newBuffer.set(buffer);
+                    newBuffer.set(value, buffer.length);
+                    buffer = newBuffer;
+
+                    // Parse the custom binary protocol
+                    while (buffer.length >= 4) {
+                        const dataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+                        const chunkLength = dataView.getUint32(0, true); // Read 4-byte little-endian length
+
+                        if (buffer.length >= 4 + chunkLength) {
+                            // Extract exact PCM chunk data using slice to ensure byte alignment for Float32Array
+                            const chunkData = new Uint8Array(buffer.buffer, buffer.byteOffset + 4, chunkLength).slice();
+                            const float32Data = new Float32Array(chunkData.buffer);
+                            
+                            // Schedule audio playback
+                            playAudioChunk(float32Data);
+                            
+                            // Remove processed bytes from the buffer
+                            buffer = new Uint8Array(buffer.buffer, buffer.byteOffset + 4 + chunkLength, buffer.length - (4 + chunkLength)).slice();
+                        } else {
+                            // Incomplete chunk, wait for more data from the stream
+                            break;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Streaming error:', error);
+                alert('Streaming interrupted: ' + error.message);
+            } finally {
+                // Restore UI State
+                btn.disabled = false;
+                spinner.classList.add('hidden');
+                btnText.textContent = 'Stream Audio';
+                btn.classList.remove('anim-pulse');
+            }
+        });
+
+        function playAudioChunk(pcmData) {
+            // Create a single-channel AudioBuffer at 24000 Hz
+            const audioBuffer = audioCtx.createBuffer(1, pcmData.length, 24000);
+            audioBuffer.getChannelData(0).set(pcmData);
+
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+
+            // Ensure playback starts either at the next scheduled time or immediately if we fell behind
+            if (nextStartTime < audioCtx.currentTime) {
+                nextStartTime = audioCtx.currentTime;
+            }
+
+            source.start(nextStartTime);
+            
+            // Advance the pointer by the duration of this chunk
+            nextStartTime += audioBuffer.duration;
+        }
+    </script>
+</body>
+</html>
